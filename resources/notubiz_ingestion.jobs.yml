@@ -1,0 +1,51 @@
+resources:
+  jobs:
+    notubiz_ingestion:
+      name: notubiz-ingestion-${bundle.target}
+      budget_policy_id: "4e4dddd7-4129-322f-9c85-3f7053f06f8b"
+      schedule:
+        quartz_cron_expression: "0 0 0 * * ?"
+        timezone_id: "Europe/Amsterdam"
+        pause_status: UNPAUSED
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "5"
+            dependencies:
+              - ../dist/*.whl
+      tasks:
+        - task_key: merge_recent_documents
+          environment_key: default
+          python_wheel_task:
+            package_name: notubiz-curator
+            entry_point: notubiz_ingest
+            parameters:
+              - --environment
+              - ${bundle.target}
+              - --config-path
+              - ${workspace.file_path}/project_config.yml
+              - --table-name
+              - notubiz_documents
+
+    notubiz_bootstrap:
+      name: notubiz-bootstrap-${bundle.target}
+      budget_policy_id: "4e4dddd7-4129-322f-9c85-3f7053f06f8b"
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "5"
+            dependencies:
+              - ../dist/*.whl
+      tasks:
+        - task_key: overwrite_full_snapshot
+          environment_key: default
+          python_wheel_task:
+            package_name: notubiz-curator
+            entry_point: notubiz_bootstrap
+            parameters:
+              - --environment
+              - ${bundle.target}
+              - --config-path
+              - ${workspace.file_path}/project_config.yml
+              - --table-name
+              - notubiz_documents

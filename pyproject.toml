@@ -1,7 +1,7 @@
 [project]
-name = "arxiv-curator"
+name = "notubiz-curator"
 dynamic = ["version"]
-description = "Arxiv Curator - Shared utilities for LLMOps Course on Databricks"
+description = "Public governance document ingestion utilities for the LLMOps course"
 requires-python = "==3.12.*"
 dependencies = [
     "cffi==1.17.1",
@@ -19,12 +19,15 @@ dependencies = [
     "backoff==2.2.1",
     "mlflow==3.16.1",
     "nest-asyncio==1.6.0",
-    "arxiv==2.3.1",
     "databricks-agents==1.12.0",
     "psycopg==3.3.2",
     "psycopg-pool==3.3.0",
     "psycopg[binary]==3.3.2"
 ]
+
+[project.scripts]
+notubiz_bootstrap = "notubiz_curator.scripts.bootstrap_notubiz:main"
+notubiz_ingest = "notubiz_curator.scripts.ingest_notubiz:main"
 
 [project.optional-dependencies]
 dev = ["pre-commit>=4.1.0, <5"]
@@ -38,7 +41,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where =["src"]
-include = ["arxiv_curator*"]
+include = ["notubiz_curator*"]
 
 [tool.setuptools.dynamic]
 version = { file = "version.txt" }
@@ -82,4 +85,4 @@ dev = [
 ]
 
 [tool.databricks.environment]
-environment_version = "6"
+environment_version = "5"
