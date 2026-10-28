@@ -1,6 +1,7 @@
 """OpenBesluitvorming client helpers for Notubiz document retrieval."""
 
 import json
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -12,6 +13,7 @@ from urllib.request import Request, urlopen
 API_BASE_URL = "https://openbesluitvorming.nl/api"
 WETTERSKIP_FRYSLAN_SOURCE = "wetterskip_fryslan"
 DEFAULT_TIMEOUT_SECONDS = 30
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -167,4 +169,12 @@ def fetch_all_documents(
             msg = "Snapshot response indicated more records but did not provide X-Next-Cursor"
             raise RuntimeError(msg)
 
-    return [normalize_document(get_document_detail(entity_id, request_json)) for entity_id in entity_ids]
+    documents = []
+    for entity_id in entity_ids:
+        try:
+            documents.append(normalize_document(get_document_detail(entity_id, request_json)))
+        except HTTPError as error:
+            if error.code != 404:
+                raise
+            logger.warning("Skipping snapshot document %s because its detail endpoint returned 404.", entity_id)
+    return documents
