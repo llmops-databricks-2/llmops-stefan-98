@@ -11,7 +11,7 @@ usage_policy_id: "4e4dddd7-4129-322f-9c85-3f7053f06f8b"
 dev:
   catalog: "llmops_dev"
   schema: "stefan_98"
-  volume: "arxiv_files"
+  volume: "notubiz_files"
   llm_endpoint: "course_ops.gateway.chat"
   embedding_endpoint: "course_ops.gateway.embed"
   warehouse_id: "114dd69b6fa40891"
@@ -23,7 +23,7 @@ dev:
 acc:
   catalog: "llmops_acc"
   schema: "stefan_98"
-  volume: "arxiv_files"
+  volume: "notubiz_files"
   llm_endpoint: "course_ops.gateway.chat"
   embedding_endpoint: "course_ops.gateway.embed"
   warehouse_id: "114dd69b6fa40891"
@@ -35,7 +35,7 @@ acc:
 prd:
   catalog: "llmops_prd"
   schema: "stefan_98"
-  volume: "arxiv_files"
+  volume: "notubiz_files"
   llm_endpoint: "course_ops.gateway.chat"
   embedding_endpoint: "course_ops.gateway.embed"
   warehouse_id: "114dd69b6fa40891"
