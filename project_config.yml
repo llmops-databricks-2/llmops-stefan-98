@@ -13,11 +13,12 @@ dev:
   schema: "stefan_98"
   volume: "notubiz_files"
   llm_endpoint: "course_ops.gateway.chat"
-  embedding_endpoint: "course_ops.gateway.embed"
+  embedding_endpoint: "databricks-gte-large-en"
   warehouse_id: "114dd69b6fa40891"
   experiment_path: "/llmops/stefan_98-dev"
   # Your provisioned Lakebase project.
   lakebase_instance: "lb-llmops-stefan-98"
+  lakebase_enabled: true
 
 # Acceptance: your schema in the acceptance catalog, written by your deploys; you read it.
 acc:
@@ -25,7 +26,7 @@ acc:
   schema: "stefan_98"
   volume: "notubiz_files"
   llm_endpoint: "course_ops.gateway.chat"
-  embedding_endpoint: "course_ops.gateway.embed"
+  embedding_endpoint: "databricks-gte-large-en"
   warehouse_id: "114dd69b6fa40891"
   experiment_path: "/llmops/stefan_98-acc"
   # Your provisioned Lakebase project for this environment.
@@ -37,7 +38,7 @@ prd:
   schema: "stefan_98"
   volume: "notubiz_files"
   llm_endpoint: "course_ops.gateway.chat"
-  embedding_endpoint: "course_ops.gateway.embed"
+  embedding_endpoint: "databricks-gte-large-en"
   warehouse_id: "114dd69b6fa40891"
   experiment_path: "/llmops/stefan_98-prd"
   # Your provisioned Lakebase project for this environment.

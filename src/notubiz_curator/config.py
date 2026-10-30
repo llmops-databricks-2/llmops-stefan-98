@@ -17,6 +17,9 @@ class ProjectConfig(BaseModel):
     embedding_endpoint: str = Field(..., description="AI Gateway embedding model service name")
     experiment_path: str = Field(..., description="MLflow experiment path for this environment")
     warehouse_id: str = Field(..., description="Warehouse ID")
+    lakebase_instance: str | None = Field(None, description="Lakebase project ID")
+    lakebase_enabled: bool = Field(False, description="Whether Lakebase is enabled for this environment")
+    usage_policy_id: str | None = Field(None, description="Budget policy for serverless resources")
     genie_space_id: str | None = Field(None, description="Genie space ID for MCP integration")
     system_prompt: str = Field(
         default="You are a helpful AI assistant that helps users find and understand public governance documents.",
@@ -46,7 +49,9 @@ class ProjectConfig(BaseModel):
         if env not in config_data:
             raise ValueError(f"Environment '{env}' not found in config file")
 
-        return cls(**config_data[env])
+        environment_config = dict(config_data[env])
+        environment_config.setdefault("usage_policy_id", config_data.get("usage_policy_id"))
+        return cls(**environment_config)
 
     @property
     def schema(self) -> str:

@@ -22,12 +22,15 @@ dependencies = [
     "databricks-agents==1.12.0",
     "psycopg==3.3.2",
     "psycopg-pool==3.3.0",
-    "psycopg[binary]==3.3.2"
+    "psycopg[binary]==3.3.2",
+    "langchain-text-splitters>=0.3,<2",
 ]
 
 [project.scripts]
 notubiz_bootstrap = "notubiz_curator.scripts.bootstrap_notubiz:main"
 notubiz_ingest = "notubiz_curator.scripts.ingest_notubiz:main"
+notubiz_chunks = "notubiz_curator.scripts.create_notubiz_chunks:main"
+notubiz_lakebase_sync = "notubiz_curator.scripts.sync_lakebase:main"
 
 [project.optional-dependencies]
 dev = ["pre-commit>=4.1.0, <5"]
