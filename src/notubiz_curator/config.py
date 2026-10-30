@@ -1,4 +1,4 @@
-"""Configuration management for Arxiv Curator."""
+"""Configuration management for Notubiz Curator."""
 
 import os
 from pathlib import Path
@@ -17,9 +17,12 @@ class ProjectConfig(BaseModel):
     embedding_endpoint: str = Field(..., description="AI Gateway embedding model service name")
     experiment_path: str = Field(..., description="MLflow experiment path for this environment")
     warehouse_id: str = Field(..., description="Warehouse ID")
+    lakebase_instance: str | None = Field(None, description="Lakebase project ID")
+    lakebase_enabled: bool = Field(False, description="Whether Lakebase is enabled for this environment")
+    usage_policy_id: str | None = Field(None, description="Budget policy for serverless resources")
     genie_space_id: str | None = Field(None, description="Genie space ID for MCP integration")
     system_prompt: str = Field(
-        default="You are a helpful AI assistant that helps users find and understand research papers.",
+        default="You are a helpful AI assistant that helps users find and understand public governance documents.",
         description="System prompt for the agent",
     )
 
@@ -40,13 +43,15 @@ class ProjectConfig(BaseModel):
         if env not in ["prd", "acc", "dev"]:
             raise ValueError(f"Invalid environment: {env}. Expected 'prd', 'acc', or 'dev'")
 
-        with open(config_path) as f:
-            config_data = yaml.safe_load(f)
+        with open(config_path, encoding="utf-8") as config_file:
+            config_data = yaml.safe_load(config_file)
 
         if env not in config_data:
             raise ValueError(f"Environment '{env}' not found in config file")
 
-        return cls(**config_data[env])
+        environment_config = dict(config_data[env])
+        environment_config.setdefault("usage_policy_id", config_data.get("usage_policy_id"))
+        return cls(**environment_config)
 
     @property
     def schema(self) -> str:
@@ -75,11 +80,9 @@ def load_config(config_path: str = "project_config.yml", env: str = "dev") -> Pr
         ProjectConfig instance
 
     """
-    # Handle relative paths from notebooks
     if not Path(config_path).is_absolute():
-        # Try to find config in parent directories
         current = Path.cwd()
-        for _ in range(3):  # Search up to 3 levels
+        for _ in range(3):
             candidate = current / config_path
             if candidate.exists():
                 config_path = str(candidate)
