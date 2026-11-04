@@ -4,23 +4,34 @@ Your repository for the LLMOps course on Databricks. Everything you need in
 the course workspace was provisioned for you before you got this repo, and every id is already in
 `project_config.yml`: you configure nothing.
 
+## Join the course Discord
+
+Join the course's Discord server with this invite link:
+[https://discord.gg/V4XRYcBFDE](https://discord.gg/V4XRYcBFDE). Join under the
+Discord username you wrote in the intake form: the course channels open automatically for members
+on the student list.
+
 ## What was provisioned for you
 
 | What | Value |
 |---|---|
+| Workspace, where you sign in | [https://dbc-e81ca4d2-f6bd.cloud.databricks.com](https://dbc-e81ca4d2-f6bd.cloud.databricks.com) |
 | Your schema in development, which you manage | `llmops_dev.stefan_98` |
 | Your schema in acceptance, which you read | `llmops_acc.stefan_98` |
 | Your schema in production, which you read | `llmops_prd.stefan_98` |
 | Suggested volume name (created by the Notubiz job) | `notubiz_files`, such as `llmops_dev.stefan_98.notubiz_files` |
-| SQL warehouse id | `114dd69b6fa40891` |
+| SQL warehouse id | `566c64409b1743cf` |
 | Usage policy id | `4e4dddd7-4129-322f-9c85-3f7053f06f8b` |
-| MLflow experiments | Dev: `/llmops/stefan_98-dev`; acc: `/llmops/stefan_98-acc`; prd: `/llmops/stefan_98-prd` |
+| MLflow experiments | Dev: `/llmops/stefan-98-dev`; acc: `/llmops/stefan-98-acc`; prd: `/llmops/stefan-98-prd` |
 | Chat model service | `course_ops.gateway.chat` |
 | Embedding serving endpoint | `databricks-gte-large-en` |
+| Embedding model service | `course_ops.gateway.embed` |
 
-The chat setting names a model service of the course's AI Gateway. The embedding setting uses the
-Databricks serving endpoint directly, both for chunk embeddings and search queries. The gateway chat
-service can be called with the `databricks-openai` package:
+## Models: which name each call takes
+
+`llm_endpoint` and `embedding_service` name model services of the course's AI Gateway, with a
+monthly budget per student. Chat routes to GPT-OSS-120B; embeddings route to GTE Large. Call them
+through the gateway with the `databricks-openai` package:
 
 ```python
 from databricks_openai import DatabricksOpenAI
@@ -38,8 +49,20 @@ The `databricks-openai` package is not included in this repo’s dependencies. T
 are available through the installed `openai` client with the workspace base URL
 `/ai-gateway/mlflow/v1` and Databricks authentication.
 
-`embedding_endpoint` identifies the serving endpoint used to generate vectors. It is not a managed
-Vector Search index's `embedding_model_endpoint_name`.
+`embedding_endpoint` names the serving endpoint of the same GTE Large model, so its vectors match
+the gateway's. Pass it wherever Databricks asks for a serving endpoint: to `ai_query` in SQL, as
+an AI Search index's `embedding_model_endpoint_name`, and to `DatabricksServingEndpoint` among
+an agent's resources. For example, in a notebook:
+
+```python
+spark.sql("SELECT ai_query('databricks-gte-large-en', text) AS embedding FROM chunks")
+```
+
+Neither name works in the other's place: the gateway client refuses the serving endpoint, and
+`ai_query` refuses the model service.
+
+The Notubiz pipeline uses the serving endpoint directly for both chunk embeddings and search
+queries. Its Lakebase search uses precomputed vectors rather than a managed AI Search index.
 
 ## Lakebase
 
