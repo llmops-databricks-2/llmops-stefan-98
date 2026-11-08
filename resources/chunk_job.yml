@@ -1,0 +1,22 @@
+resources:
+  jobs:
+    notubiz_chunks:
+      name: notubiz-chunks-${bundle.target}
+      budget_policy_id: "4e4dddd7-4129-322f-9c85-3f7053f06f8b"
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "5"
+            dependencies:
+              - ../dist/*.whl
+      tasks:
+        - task_key: create_embedded_chunks
+          environment_key: default
+          python_wheel_task:
+            package_name: notubiz-curator
+            entry_point: notubiz_chunks
+            parameters:
+              - --environment
+              - ${bundle.target}
+              - --config-path
+              - ${workspace.file_path}/project_config.yml
