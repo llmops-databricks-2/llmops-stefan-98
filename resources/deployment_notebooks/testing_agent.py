@@ -64,7 +64,7 @@ logger.info("Environment: {}; session: {}", env, session_id)
 
 first_question = "Zet voor mij alle toezeggingen van het dagelijks bestuur over veenweide sinds 2024 op een rijtje."
 logger.info("Starting question 1: hybrid document search")
-answer = agent.generate_message(first_question, session_id=session_id)
+answer = agent.generate_message(first_question, session_id=session_id, request_id=str(uuid4()))
 logger.info("Hybrid search answer: {}", answer)
 
 # COMMAND ----------
@@ -78,6 +78,7 @@ logger.info("Starting question 2: Genie")
 answer = agent.generate_message(
     "Gebruik Genie om te bepalen hoeveel documenten er per organisatie in de documenttabel staan.",
     session_id=session_id,
+    request_id=str(uuid4()),
 )
 logger.info("Genie answer: {}", answer)
 
@@ -94,6 +95,7 @@ logger.info("Starting question 3: web search")
 answer = agent.generate_message(
     "Zoek op het internet: wat is Notubiz?",
     session_id=session_id,
+    request_id=str(uuid4()),
 )
 logger.info("Web search answer: {}", answer)
 
@@ -108,5 +110,5 @@ logger.info("Web search answer: {}", answer)
 
 recall_question = "Wat was mijn eerste vraag in dit gesprek? Herhaal die vraag zo letterlijk mogelijk."
 logger.info("Starting question 4: session memory")
-answer = agent.generate_message(recall_question, session_id=session_id)
+answer = agent.generate_message(recall_question, session_id=session_id, request_id=str(uuid4()))
 logger.info("Memory answer: {}", answer)

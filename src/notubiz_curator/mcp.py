@@ -3,8 +3,10 @@
 from collections.abc import Callable
 from typing import Any
 
+import mlflow
 from databricks.sdk import WorkspaceClient
 from databricks_mcp import DatabricksMCPClient
+from mlflow.entities import SpanType
 from pydantic import BaseModel
 
 
@@ -38,6 +40,7 @@ def create_managed_exec_fn(server_url: str, tool_name: str, w: WorkspaceClient) 
 
     """
 
+    @mlflow.trace(name=tool_name, span_type=SpanType.TOOL)
     def exec_fn(**kwargs: object) -> str:
         client = DatabricksMCPClient(server_url=server_url, workspace_client=w)
         response = client.call_tool(tool_name, kwargs)

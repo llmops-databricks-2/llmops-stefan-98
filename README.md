@@ -40,6 +40,48 @@ session history is kept unchanged. Repeated searches can increase latency, cost 
 A session ID is not an access control
 mechanism; access restrictions and retention periods must be configured separately.
 
+## MLflow tracing
+
+Agent creation selects the configured `experiment_path` before tracing any requests.
+The experiment is bound separately to the existing Unity Catalog trace tables with prefix
+`llmops`. `MLFLOW_TRACING_SQL_WAREHOUSE_ID` is set from the environment configuration.
+
+Each request produces the following span hierarchy:
+
+```text
+agent_request (AGENT)
+└── agent_chain (CHAIN)
+    ├── memory_load (MEMORY, when session memory is used)
+    ├── agent_iteration_1 (CHAIN)
+    │   ├── llm_call (LLM)
+    │   └── search_documents / discovered MCP tool name (TOOL, zero or more)
+    ├── agent_iteration_2 (CHAIN)
+    │   └── llm_call (LLM)
+    └── memory_save (MEMORY, after a completed turn)
+```
+## Agent evaluation
+
+`eval_inputs.txt` contains ten JSONL cases with an input, expected behavior and a
+forbidden behavior. The set covers document search, dates, Genie, web-based Notubiz questions,
+history reuse, ambiguity and unrelated questions such as weather and sports.
+
+The evaluation in `src/notubiz_curator/evaluation.py` applies:
+
+- a deterministic check for a non-empty answer of at most 350 words;
+- a guideline for a polite, professional tone;
+- a guideline for staying within the Notubiz/Wetterskip scope;
+- a task-specific judge that compares the answer with the reviewed expectations.
+
+Deploy the bundle and run:
+
+```bash
+databricks bundle run -t dev evaluating_agent
+```
+
+`mlflow.genai.evaluate()` creates an evaluation run in the configured MLflow experiment and
+stores its metrics and per-case judge assessments there. The run ID is printed by the evaluation
+job.
+
 ## Key considerations
 
 - The current embedding model, `databricks-gte-large-en`, is English-language. A multilingual
