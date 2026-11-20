@@ -1,0 +1,25 @@
+resources:
+  jobs:
+    evaluating_agent:
+      name: notubiz-evaluating-agent-${bundle.target}
+      budget_policy_id: "4e4dddd7-4129-322f-9c85-3f7053f06f8b"
+      parameters:
+        - name: environment
+          default: "${bundle.target}"
+        - name: genie_space_id
+          default: "${resources.genie_spaces.notubiz-space.id}"
+        - name: config_path
+          default: "${workspace.file_path}/project_config.yml"
+        - name: eval_inputs_path
+          default: "${workspace.file_path}/eval_inputs.txt"
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "5"
+            dependencies:
+              - ../dist/*.whl
+      tasks:
+        - task_key: evaluating_agent
+          environment_key: default
+          notebook_task:
+            notebook_path: deployment_notebooks/evaluating_agent.py

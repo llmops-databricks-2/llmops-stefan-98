@@ -2,6 +2,7 @@
 
 import math
 import os
+from datetime import date
 from typing import Any
 
 import psycopg
@@ -127,7 +128,14 @@ class LakebasePgVectorManager:
             columns = [column.name for column in cursor.description]
         return [dict(zip(columns, row, strict=True)) for row in rows]
 
-    def search(self, query: str, num_results: int = 5, meeting_id: str | None = None) -> list[dict[str, Any]]:
+    def search(
+        self,
+        query: str,
+        num_results: int = 5,
+        meeting_id: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> list[dict[str, Any]]:
         """Rank chunks by cosine similarity, optionally restricting the meeting."""
         if num_results < 1:
             raise ValueError("num_results must be positive")
@@ -137,6 +145,12 @@ class LakebasePgVectorManager:
         if meeting_id is not None:
             where += sql.SQL(" AND meeting_id = %s")
             params.append(meeting_id)
+        if date_from is not None:
+            where += sql.SQL(" AND meeting_date >= %s")
+            params.append(date_from.isoformat())
+        if date_to is not None:
+            where += sql.SQL(" AND meeting_date <= %s")
+            params.append(date_to.isoformat())
         params.extend([vector, num_results])
         statement = sql.SQL("""
             SELECT chunk_id, document_id, document_title, meeting_id, meeting_date, source_url,
@@ -154,6 +168,8 @@ class LakebasePgVectorManager:
         num_results: int = 5,
         meeting_id: str | None = None,
         vector_weight: float = 0.7,
+        date_from: date | None = None,
+        date_to: date | None = None,
     ) -> list[dict[str, Any]]:
         """Combine cosine similarity and Dutch PostgreSQL full-text ranking."""
         if num_results < 1:
@@ -169,6 +185,12 @@ class LakebasePgVectorManager:
         if meeting_id is not None:
             where += sql.SQL(" AND meeting_id = %s")
             params.append(meeting_id)
+        if date_from is not None:
+            where += sql.SQL(" AND meeting_date >= %s")
+            params.append(date_from.isoformat())
+        if date_to is not None:
+            where += sql.SQL(" AND meeting_date <= %s")
+            params.append(date_to.isoformat())
         params.extend([vector_weight, text_weight, num_results])
         statement = sql.SQL("""
             WITH ranked AS (
