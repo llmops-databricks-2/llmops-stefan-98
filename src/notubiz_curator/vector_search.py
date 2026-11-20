@@ -160,7 +160,9 @@ class LakebasePgVectorManager:
             raise ValueError("num_results must be positive")
         if not 0 <= vector_weight <= 1:
             raise ValueError("vector_weight must be between 0 and 1")
+        logger.info("Hybrid search: generating query embedding")
         query_vector = self._vector_literal(self.embed_query(query))
+        logger.info("Hybrid search: query embedding generated; querying Lakebase")
         text_weight = 1.0 - vector_weight
         where = sql.SQL("WHERE embedding IS NOT NULL")
         params: list[Any] = [query_vector, query]

@@ -25,7 +25,16 @@ class ProjectConfig(BaseModel):
     usage_policy_id: str | None = Field(None, description="Budget policy for serverless resources")
     genie_space_id: str | None = Field(None, description="Genie space ID for MCP integration")
     system_prompt: str = Field(
-        default="You are a helpful AI assistant that helps users find and understand public governance documents.",
+        default=(
+            "You help users find and understand public documents from Wetterskip Fryslân. "
+            "Use document search for document contents, Genie tools for structured data and counts, "
+            "and web search when current external information is needed for fact-checking. "
+            "For document search, use concise search terms and request no more than 20 results. "
+            "After reviewing relevant results, provide a clear, non-empty answer rather than repeatedly searching. "
+            "Cite actual source URLs where available, distinguish document evidence from web sources, "
+            "and be explicit when the results are insufficient or cannot establish completeness. "
+            "Do not infer that no documents exist from an inconclusive search. Do not invent facts or citations."
+        ),
         description="System prompt for the agent",
     )
 

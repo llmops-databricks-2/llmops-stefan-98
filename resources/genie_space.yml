@@ -1,0 +1,69 @@
+resources:
+  genie_spaces:
+    notubiz-space:
+      title: notubiz-space
+      description: Vragen over de gestructureerde metadata van Notubiz-documenten.
+      warehouse_id: "${var.warehouse_id}"
+      serialized_space:
+        version: 2
+        config:
+          sample_questions:
+            - id: "10000000000000000000000000000001"
+              question: ["Hoeveel documenten zijn er per organisatie?"]
+            - id: "10000000000000000000000000000002"
+              question: ["Welke vergaderingen hebben de meeste documenten?"]
+            - id: "10000000000000000000000000000003"
+              question: ["Hoeveel documenten zijn er per contenttype?"]
+        data_sources:
+          tables:
+            - identifier: "${var.catalog}.${var.schema}.notubiz_documents"
+              column_configs:
+                - column_name: content_type
+                  description: ["Contenttype van het bronbestand."]
+                - column_name: date_modified
+                  description: ["Wijzigingsdatum uit de bron, opgeslagen als tekst."]
+                - column_name: document_id
+                  description: ["Unieke identificatie van het document."]
+                - column_name: document_text
+                  description: ["Geextraheerde documentinhoud als Markdown."]
+                  exclude: true
+                - column_name: document_title
+                  description: ["Titel van het document."]
+                  synonyms: ["titel", "documentnaam"]
+                  enable_entity_matching: true
+                - column_name: ingested_at
+                  description: ["Tijdstip waarop het document is ingelezen."]
+                - column_name: meeting_date
+                  description: ["Vergaderdatum uit sortDate van de bron, opgeslagen als tekst."]
+                - column_name: meeting_id
+                  description: ["Identificatie van de vergadering waartoe het document behoort."]
+                - column_name: organization
+                  description: ["Organisatie uit de Notubiz-bron."]
+                  synonyms: ["organisatie", "gemeente"]
+                  enable_entity_matching: true
+                - column_name: pdf_source_url
+                  description: ["URL van de bron-PDF, indien beschikbaar."]
+                - column_name: source_url
+                  description: ["URL van de PDF of download van het document."]
+        instructions:
+          text_instructions:
+            - id: "30000000000000000000000000000001"
+              content:
+                - "Elke rij in notubiz_documents is een document, niet een vergadering. Tel verschillende meeting_id-waarden om vergaderingen te tellen."
+                - "meeting_date en date_modified zijn tekstvelden; ga niet uit van een datumformaat. Gebruik ingested_at voor vragen over het tijdstip van inlezen."
+                - "Sluit ontbrekende meeting_id-waarden uit bij tellingen per vergadering. Vermeld ontbrekende organisatie of contenttype als onbekend."
+                - "Gebruik deze tabel voor gestructureerde metadata en tellingen. Gebruik document search voor inhoudelijke vragen over documenten."
+          example_question_sqls:
+            - id: "20000000000000000000000000000001"
+              question: ["Hoeveel documenten zijn er per organisatie?"]
+              sql:
+                - "SELECT COALESCE(NULLIF(organization, ''), 'Onbekend') AS organisatie, COUNT(*) AS aantal_documenten "
+                - "FROM ${var.catalog}.${var.schema}.notubiz_documents "
+                - "GROUP BY COALESCE(NULLIF(organization, ''), 'Onbekend') ORDER BY aantal_documenten DESC"
+            - id: "20000000000000000000000000000002"
+              question: ["Welke vergaderingen hebben de meeste documenten?"]
+              sql:
+                - "SELECT meeting_id, COUNT(*) AS aantal_documenten "
+                - "FROM ${var.catalog}.${var.schema}.notubiz_documents "
+                - "WHERE meeting_id IS NOT NULL AND meeting_id <> '' "
+                - "GROUP BY meeting_id ORDER BY aantal_documenten DESC LIMIT 10"
