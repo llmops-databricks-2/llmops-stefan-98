@@ -64,17 +64,23 @@ class LakebaseMemory:
     def ensure_schema(self) -> None:
         """Create the session table and index if they do not exist."""
         with self._connection() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS session_messages (
-                    id SERIAL PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    message_data JSONB NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            table_exists = conn.execute("SELECT to_regclass('session_messages')").fetchone()
+            if not table_exists or table_exists[0] is None:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS session_messages (
+                        id SERIAL PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        message_data JSONB NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
                 )
-                """
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_session_messages_session_id ON session_messages(session_id)")
+            index_exists = conn.execute("SELECT to_regclass('idx_session_messages_session_id')").fetchone()
+            if not index_exists or index_exists[0] is None:
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_session_messages_session_id ON session_messages(session_id)"
+                )
 
     def load_messages(self, session_id: str) -> list[dict[str, Any]]:
         """Load a session's messages in insertion order."""

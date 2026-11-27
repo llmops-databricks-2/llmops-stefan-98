@@ -1,0 +1,47 @@
+name: Deploy environment
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    if: ${{ inputs.target == 'acc' || inputs.target == 'prd' }}
+    runs-on: ubuntu-latest
+    # Configure required reviewers for prd in GitHub Settings > Environments.
+    environment: ${{ inputs.target }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DATABRICKS_AUTH_TYPE: github-oidc
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@9230f12203ef173d0b901846f62a55ce997efef7 # v1.20.0
+        with:
+          version: 1.24.0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Deploy bundle resources
+        run: |
+          databricks bundle deploy \
+            --target "${{ inputs.target }}" \
+            --var="git_sha=${GITHUB_SHA}"
+
+      - name: Evaluate and test App
+        run: |
+          databricks bundle run evaluate_deploy_app \
+            --target "${{ inputs.target }}"
