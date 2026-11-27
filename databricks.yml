@@ -2,7 +2,10 @@
 # See https://docs.databricks.com/dev-tools/bundles/index.html for documentation.
 
 bundle:
+  engine: direct
   name: llmops-stefan-98
+  # 1.23.0 adds lifecycle.depends_on for explicit resource deployment ordering.
+  databricks_cli_version: ">= 1.23.0"
 
 variables:
   catalog:
@@ -14,12 +17,24 @@ variables:
   warehouse_id:
     description: Existing SQL warehouse for Genie
     default: "566c64409b1743cf"
+  usage_policy_id:
+    description: Usage policy for serverless jobs and Apps, matching project_config.yml
+    default: "4e4dddd7-4129-322f-9c85-3f7053f06f8b"
+  agent_service_principal_id:
+    description: Existing agent runtime service principal granted access to Genie and the App
+    default: "7b7f9888-1c2b-42f9-95ea-c0257fcb0686"
+  git_sha:
+    description: git_sha
+    default: local
+  schedule_pause_status:
+    description: schedule pause status
+    default: PAUSED
 
 # The course package is built as a wheel and installed in every job environment.
 artifacts:
   default:
     type: whl
-    build: uv build
+    build: uv build --native-tls
     path: .
 
 include:
@@ -39,18 +54,24 @@ targets:
       host: https://dbc-e81ca4d2-f6bd.cloud.databricks.com
       root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.target}/${bundle.name}
 
-  # Acceptance: deployed on every merge to main.
+  # Acceptance: deployed manually or on merge to main.
   acc:
+    mode: production
     variables:
       catalog: llmops_acc
+      agent_service_principal_id: "3b073564-957f-4ba3-a9ae-ae0a97e67336"
+      schedule_pause_status: PAUSED
     workspace:
       host: https://dbc-e81ca4d2-f6bd.cloud.databricks.com
-      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.target}/${bundle.name}
+      root_path: /Shared/.bundle/${bundle.target}/${bundle.name}
 
   # Production: deployed after acceptance, once you approve it.
   prd:
+    mode: production
     variables:
       catalog: llmops_prd
+      agent_service_principal_id: "8131e633-8547-40bc-be11-f3b5602f1c62"
+      schedule_pause_status: UNPAUSED
     workspace:
       host: https://dbc-e81ca4d2-f6bd.cloud.databricks.com
-      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.target}/${bundle.name}
+      root_path: /Shared/.bundle/${bundle.target}/${bundle.name}
