@@ -1,21 +1,28 @@
-"""Minimal agent using an OpenAI-compatible Databricks endpoint."""
+"""Notubiz agent implementing the MLflow ResponsesAgent interface."""
 
+import asyncio
 import json
 import os
+from collections.abc import Generator
 from time import perf_counter
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
+import backoff
 import mlflow
+import nest_asyncio
+import openai
 from databricks.sdk import WorkspaceClient
 from loguru import logger
 from mlflow.entities import SpanType
-from openai import OpenAI, omit
-from openai.types.chat import ChatCompletionMessageParam
-from openai.types.chat.chat_completion import ChatCompletion
-from openai.types.chat.chat_completion_message_function_tool_call_param import (
-    ChatCompletionMessageFunctionToolCallParam,
+from mlflow.pyfunc.model import ResponsesAgent
+from mlflow.types.responses import (
+    ResponsesAgentRequest,
+    ResponsesAgentResponse,
+    ResponsesAgentStreamEvent,
 )
+from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 from notubiz_curator.config import ProjectConfig
 from notubiz_curator.mcp import ToolInfo, create_mcp_tools
@@ -23,8 +30,7 @@ from notubiz_curator.memory import LakebaseMemory
 from notubiz_curator.tools import create_search_documents_tool
 from notubiz_curator.vector_search import LakebasePgVectorManager
 
-_DEFAULT_MAX_ITERATIONS = 10
-_MAX_WRAPUP_RETRIES = 2
+_DEFAULT_MAX_ITERATIONS = 15
 
 
 class MessageStore(Protocol):
@@ -39,8 +45,8 @@ class MessageStore(Protocol):
         ...
 
 
-class NotubizAgent:
-    """Call a chat model and execute its requested function tools."""
+class NotubizAgent(ResponsesAgent):
+    """ResponsesAgent for Notubiz documents, Genie, web search, and Lakebase memory."""
 
     def __init__(
         self,
@@ -50,24 +56,17 @@ class NotubizAgent:
         tools: list[ToolInfo] | None = None,
         memory: MessageStore | None = None,
     ) -> None:
-        """Create an agent using the supplied workspace.
+        """Initialize the Notubiz Agent."""
+        nest_asyncio.apply()
 
-        Args:
-            workspace: Authenticated Databricks workspace client.
-            llm_endpoint: AI Gateway model service name.
-            system_prompt: Instructions sent with each conversation.
-            tools: Optional tools the model can call.
-            memory: Optional message store for session-based conversations.
-
-        """
+        self.workspace_client = workspace
         self.llm_endpoint = llm_endpoint
         self.system_prompt = system_prompt
         self.memory = memory
 
-        self.tools = {tool.name: tool for tool in tools or []}
-        if len(self.tools) != len(tools or []):
+        self._tools_dict = {tool.name: tool for tool in tools or []}
+        if len(self._tools_dict) != len(tools or []):
             raise ValueError("Tool names must be unique")
-        self.tool_specs = [tool.spec for tool in self.tools.values()]
 
         base_url = f"{workspace.config.host.rstrip('/')}/ai-gateway/mlflow/v1"
 
@@ -77,9 +76,213 @@ class NotubizAgent:
                 raise RuntimeError("Databricks authentication did not provide a bearer token")
             return authorization[len("Bearer ") :]
 
-        self.client = OpenAI(api_key=access_token, base_url=base_url)
+        self.model_serving_client = OpenAI(api_key=access_token, base_url=base_url)
 
-    @mlflow.trace(name="agent_request", span_type=SpanType.AGENT)
+    @classmethod
+    def from_config(
+        cls,
+        config: ProjectConfig,
+        workspace: WorkspaceClient | None = None,
+        *,
+        genie_space_id: str | None = None,
+    ) -> "NotubizAgent":
+        """Create a NotubizAgent synchronously from ProjectConfig."""
+        nest_asyncio.apply()
+        return asyncio.run(
+            create_notubiz_agent(
+                config,
+                workspace or WorkspaceClient(),
+                genie_space_id=genie_space_id,
+            )
+        )
+
+    def get_tool_specs(self) -> list[dict[str, Any]]:
+        """Return tool specifications for the Unified Responses API."""
+        return [
+            {
+                "type": "function",
+                "name": tool_info.spec["function"]["name"],
+                "description": tool_info.spec["function"].get("description", ""),
+                "parameters": tool_info.spec["function"].get("parameters", {"type": "object", "properties": {}}),
+            }
+            for tool_info in self._tools_dict.values()
+        ]
+
+    @mlflow.trace(span_type=SpanType.TOOL)
+    def execute_tool(self, tool_name: str, args: dict[str, Any]) -> object:
+        """Execute the specified tool with the given arguments."""
+        if tool_name not in self._tools_dict:
+            logger.warning("Model requested an unavailable tool: name={}", tool_name)
+            return "Error: this tool is unavailable. Use available tools or answer from existing results."
+        started = perf_counter()
+        result = self._tools_dict[tool_name].exec_fn(**args)
+        logger.info("Tool completed: name={}, seconds={:.2f}", tool_name, perf_counter() - started)
+        return result
+
+    @backoff.on_exception(backoff.expo, openai.RateLimitError)
+    @mlflow.trace(span_type=SpanType.LLM)
+    def call_llm(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Call the serving endpoint and return one Responses output item."""
+        response = self.model_serving_client.responses.create(
+            model=self.llm_endpoint,
+            input=cast(Any, messages),
+            tools=cast(Any, self.get_tool_specs()),
+            max_output_tokens=1024,
+        )
+        for item in response.output:
+            if getattr(item, "type", None) != "function_call":
+                continue
+            call_id = getattr(item, "call_id", None) or getattr(item, "id", str(uuid4()))
+            return self.create_function_call_item(
+                id=call_id,
+                call_id=call_id,
+                name=getattr(item, "name", ""),
+                arguments=getattr(item, "arguments", "{}"),
+            )
+
+        return self.create_text_output_item(
+            text=response.output_text or "",
+            id=response.id or str(uuid4()),
+        )
+
+    def handle_tool_call(self, tool_call: dict[str, Any], messages: list[dict[str, Any]]) -> ResponsesAgentStreamEvent:
+        """Execute a tool call, append its output to messages, and return a stream event."""
+        args = json.loads(tool_call["arguments"])
+        if not isinstance(args, dict):
+            raise ValueError(f"Tool arguments for {tool_call['name']} must be a JSON object")
+        result = str(self.execute_tool(tool_name=tool_call["name"], args=args))
+
+        tool_call_output = self.create_function_call_output_item(tool_call["call_id"], result)
+        messages.append(tool_call_output)
+        return ResponsesAgentStreamEvent.model_validate({"type": "response.output_item.done", "item": tool_call_output})
+
+    @mlflow.trace(span_type=SpanType.MEMORY, name="memory_load")
+    def load_memory(self, session_id: str) -> list[dict[str, Any]]:
+        """Load previous messages from Lakebase memory."""
+        if self.memory:
+            return self.memory.load_messages(session_id)
+        return []
+
+    @mlflow.trace(span_type=SpanType.MEMORY, name="memory_save")
+    def save_memory(self, session_id: str, messages: list[dict[str, Any]]) -> None:
+        """Save new messages to Lakebase memory."""
+        if self.memory:
+            self.memory.save_messages(session_id, messages)
+
+    def _extract_output_items(self, events: list[ResponsesAgentStreamEvent]) -> list[dict[str, Any]]:
+        """Extract all Responses output items from completed stream events."""
+        items: list[dict[str, Any]] = []
+        for event in events:
+            if event.type != "response.output_item.done":
+                continue
+            raw_item = getattr(event, "item", None)
+            if raw_item is None:
+                continue
+            item = raw_item if isinstance(raw_item, dict) else raw_item.model_dump()
+            items.append(item)
+        return items
+
+    def _run_tool_loop(
+        self,
+        messages: list[dict[str, Any]],
+        max_iter: int = _DEFAULT_MAX_ITERATIONS,
+    ) -> list[ResponsesAgentStreamEvent]:
+        """Run the LLM <-> tool loop until the model stops or max_iter."""
+        events: list[ResponsesAgentStreamEvent] = []
+        for _ in range(max_iter):
+            last_msg = messages[-1]
+            if last_msg.get("type") == "message" and last_msg.get("role") == "assistant":
+                return events
+            if last_msg.get("type") == "function_call":
+                tool_event = self.handle_tool_call(last_msg, messages)
+                events.append(tool_event)
+            else:
+                llm_output = self.call_llm(messages)
+                messages.append(llm_output)
+                events.append(
+                    ResponsesAgentStreamEvent.model_validate({"type": "response.output_item.done", "item": llm_output})
+                )
+        else:
+            events.append(
+                ResponsesAgentStreamEvent.model_validate(
+                    {
+                        "type": "response.output_item.done",
+                        "item": self.create_text_output_item("Max iterations reached. Stopping.", str(uuid4())),
+                    }
+                )
+            )
+        return events
+
+    @mlflow.trace(span_type=SpanType.CHAIN)
+    def call_and_run_tools(
+        self,
+        request_input: list[dict[str, Any]],
+        previous_messages: list[dict[str, Any]] | None = None,
+        request_id: str | None = None,
+        session_id: str | None = None,
+        max_iter: int = _DEFAULT_MAX_ITERATIONS,
+    ) -> list[ResponsesAgentStreamEvent]:
+        """Run a full conversation turn and persist new messages to memory when configured."""
+        messages: list[dict[str, Any]] = [{"role": "system", "content": self.system_prompt}]
+        if previous_messages:
+            messages.extend(previous_messages)
+        messages.extend(request_input)
+
+        mlflow.update_current_trace(
+            tags={
+                "git_sha": os.getenv("GIT_SHA", "local"),
+                "deployment_name": os.getenv(
+                    "DATABRICKS_APP_NAME",
+                    os.getenv("MODEL_SERVING_ENDPOINT_NAME", "local"),
+                ),
+                "model_version": os.getenv("MODEL_VERSION", "local"),
+            },
+            metadata=({"mlflow.trace.session": session_id} if session_id else {}),
+            client_request_id=request_id or str(uuid4()),
+        )
+
+        events = self._run_tool_loop(messages, max_iter=max_iter)
+
+        if session_id and self.memory:
+            self.save_memory(
+                session_id,
+                request_input + self._extract_output_items(events),
+            )
+        return events
+
+    def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
+        """Handle non-streaming Responses API requests."""
+        events = list(self.predict_stream(request))
+        return ResponsesAgentResponse(
+            output=cast(Any, self._extract_output_items(events)),
+            custom_outputs=request.custom_inputs,
+        )
+
+    @mlflow.trace(span_type=SpanType.AGENT)
+    def predict_stream(self, request: ResponsesAgentRequest) -> Generator[ResponsesAgentStreamEvent, None, None]:
+        """Stream Responses API events for the incoming request."""
+        custom = request.custom_inputs or {}
+        session_id = custom.get("session_id")
+        request_id = custom.get("request_id")
+
+        if session_id is not None and self.memory is None:
+            raise ValueError("A message store is required for a session")
+        if session_id is not None and (not isinstance(session_id, str) or not session_id.strip()):
+            raise ValueError("session_id must be a non-empty string")
+        if request_id is not None and (not isinstance(request_id, str) or not request_id.strip()):
+            raise ValueError("request_id must be a non-empty string")
+
+        previous_messages = self.load_memory(session_id) if session_id and self.memory else []
+
+        request_input = [item.model_dump() for item in request.input]
+        events = self.call_and_run_tools(
+            request_input=request_input,
+            previous_messages=previous_messages,
+            request_id=request_id,
+            session_id=session_id,
+        )
+        yield from events
+
     def generate_message(
         self,
         message: str,
@@ -89,278 +292,36 @@ class NotubizAgent:
         history: list[ChatCompletionMessageParam] | None = None,
         request_id: str | None = None,
     ) -> str:
-        """Send a message and execute requested tools until the model responds.
-
-        Pass a session ID to load its history from the configured memory and
-        save each complete turn atomically after the model produces an answer.
-        Alternatively, pass history directly to bypass memory entirely. History
-        should not contain the system prompt. Passing neither starts a one-off
-        conversation; passing both is not allowed.
-
-        Args:
-            message: User request to send to the model.
-            max_iterations: Maximum model calls in the agent loop, including the wrap-up.
-                An empty wrap-up can be retried twice without tools.
-            session_id: Session to load and append; requires configured memory.
-            history: Prior messages to use without reading or writing memory.
-            request_id: Request identifier for trace correlation. A UUID is generated when omitted.
-
-        Returns:
-            The model's final text response.
-
-        Raises:
-            ValueError: If the session and history conflict, the store is absent,
-                or the model requests an unsupported tool call type.
-            RuntimeError: If the model provides no text or exhausts the limit.
-
-        """
+        """Send a text message using the ResponsesAgent implementation."""
         if session_id is not None and history is not None:
             raise ValueError("Provide either session_id or history, not both")
-        if session_id is not None and self.memory is None:
-            raise ValueError("A message store is required for a session")
-        if session_id is not None and not session_id.strip():
-            raise ValueError("session_id must not be empty")
-        if isinstance(max_iterations, bool) or not isinstance(max_iterations, int) or not 1 <= max_iterations <= 10:
-            raise ValueError("max_iterations must be an integer between 1 and 10")
-        if request_id is not None and (not isinstance(request_id, str) or not request_id.strip()):
-            raise ValueError("request_id must be a non-empty string")
+        if isinstance(max_iterations, bool) or max_iterations < 1:
+            raise ValueError("max_iterations must be a positive integer")
 
-        request_id = request_id or str(uuid4())
-        metadata = {"mlflow.trace.session": session_id} if session_id is not None else {}
-        mlflow.update_current_trace(
-            metadata=metadata,
-            tags={
-                "git_sha": os.getenv("GIT_SHA", "local"),
-                "deployment_name": os.getenv(
-                    "DATABRICKS_APP_NAME",
-                    os.getenv("MODEL_SERVING_ENDPOINT_NAME", "local"),
-                ),
-                "model_version": os.getenv("MODEL_VERSION", "local"),
-            },
-            client_request_id=request_id,
-        )
-        return self._run_agent_chain(
-            message=message,
-            max_iterations=max_iterations,
-            session_id=session_id,
-            history=history,
-            request_id=request_id,
-        )
+        request_messages: list[dict[str, Any]] = [dict(item) for item in history] if history else []
+        request_messages.append({"role": "user", "content": message})
+        custom_inputs: dict[str, Any] = {}
+        if session_id is not None:
+            custom_inputs["session_id"] = session_id
+        if request_id is not None:
+            custom_inputs["request_id"] = request_id
 
-    @mlflow.trace(name="memory_load", span_type=SpanType.MEMORY)
-    def _load_memory(self, session_id: str) -> list[ChatCompletionMessageParam]:
-        """Load a session's prior messages for the current trace."""
-        if self.memory is None:
-            raise RuntimeError("A message store is required to load session memory")
-        return cast(list[ChatCompletionMessageParam], self.memory.load_messages(session_id))
-
-    @mlflow.trace(name="memory_save", span_type=SpanType.MEMORY)
-    def _save_memory(self, session_id: str, messages: list[ChatCompletionMessageParam]) -> None:
-        """Persist messages produced by the current turn."""
-        if self.memory is None:
-            raise RuntimeError("A message store is required to save session memory")
-        self.memory.save_messages(session_id, [dict(item) for item in messages])
-
-    @mlflow.trace(name="llm_call", span_type=SpanType.LLM)
-    def _call_llm(
-        self,
-        messages: list[ChatCompletionMessageParam],
-        *,
-        tools_enabled: bool,
-        reasoning_effort_low: bool,
-    ) -> ChatCompletion:
-        """Call the configured model for one agent-loop iteration."""
-        return self.client.chat.completions.create(
-            model=self.llm_endpoint,
-            messages=messages,
-            tools=self.tool_specs if tools_enabled else omit,  # type: ignore
-            reasoning_effort="low" if reasoning_effort_low else omit,
-        )
-
-    @mlflow.trace(name="agent_chain", span_type=SpanType.CHAIN)
-    def _run_agent_chain(
-        self,
-        message: str,
-        max_iterations: int,
-        *,
-        session_id: str | None,
-        history: list[ChatCompletionMessageParam] | None,
-        request_id: str,
-    ) -> str:
-        """Run the model/tool loop beneath the traced agent request."""
-        logger.info(
-            "Starting agent turn: max_iterations={}, session_memory={}, request_id={}",
-            max_iterations,
-            session_id is not None,
-            request_id,
-        )
-        if session_id is not None and self.memory is not None:
-            logger.info("Loading session history from Lakebase")
-            previous = self._load_memory(session_id)
-            logger.info("Loaded {} session messages", len(previous))
-        else:
-            previous = list(history) if history is not None else []
-
-        messages: list[ChatCompletionMessageParam] = [{"role": "system", "content": self.system_prompt}, *previous]
-        user_message: ChatCompletionMessageParam = {"role": "user", "content": message}
-        messages.append(user_message)
-        new_messages: list[ChatCompletionMessageParam] = [user_message]
-        empty_answer_retries = 0
-
-        for iteration in range(max_iterations + _MAX_WRAPUP_RETRIES):
-            with mlflow.start_span(
-                name=f"agent_iteration_{iteration + 1}",
-                span_type=SpanType.CHAIN,
-                attributes={
-                    "iteration": iteration + 1,
-                    "max_iterations": max_iterations,
-                    "phase": "normal" if iteration < max_iterations else "empty_wrapup_retry",
-                },
-            ):
-                final_call = iteration >= max_iterations - 1
-                if iteration == max_iterations - 1:
-                    logger.info("Starting final wrap-up without tools")
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                "You have spent several turns working on this task. No further tool calls are available. "
-                                "Please provide your best final answer now based on what you have learned so far. "
-                                "Cite sources where possible and explicitly state any limitations or missing information."
-                            ),
-                        }
-                    )
-                elif iteration >= max_iterations:
-                    logger.warning(
-                        "Retrying empty wrap-up without tools: attempt {}/{}",
-                        iteration - max_iterations + 1,
-                        _MAX_WRAPUP_RETRIES,
-                    )
-                    if iteration == max_iterations:
-                        messages.append(
-                            {
-                                "role": "system",
-                                "content": (
-                                    "The previous wrap-up was empty. Write a non-empty final answer using only the "
-                                    "information available, and state clearly if it is insufficient or incomplete."
-                                ),
-                            }
-                        )
-                logger.info(
-                    "Model call {}/{}: endpoint={}, messages={}, tools_enabled={}, empty_retries={}",
-                    iteration + 1,
-                    max_iterations if iteration < max_iterations else max_iterations + _MAX_WRAPUP_RETRIES,
-                    self.llm_endpoint,
-                    len(messages),
-                    bool(self.tool_specs and not final_call),
-                    empty_answer_retries,
-                )
-                started = perf_counter()
-                response = self._call_llm(
-                    messages,
-                    tools_enabled=bool(self.tool_specs and not final_call),
-                    reasoning_effort_low=iteration >= max_iterations,
-                )
-                choice = response.choices[0]
-                assistant_message = choice.message
-                usage = response.usage
-                logger.info(
-                    "Model response: iteration={}, seconds={:.2f}, model={}, finish_reason={}, "
-                    "answer_chars={}, tool_calls={}, prompt_tokens={}, completion_tokens={}, request_id={}",
-                    iteration + 1,
-                    perf_counter() - started,
-                    response.model,
-                    choice.finish_reason,
-                    len(assistant_message.content or ""),
-                    len(assistant_message.tool_calls or []),
-                    usage.prompt_tokens if usage else None,
-                    usage.completion_tokens if usage else None,
-                    response._request_id,
-                )
-
-                if final_call and assistant_message.tool_calls:
-                    raise RuntimeError("Model requested another tool after the allowed iterations for tool calls.")
-                if not assistant_message.tool_calls:
-                    if not assistant_message.content or not assistant_message.content.strip():
-                        if iteration == max_iterations + _MAX_WRAPUP_RETRIES - 1:
-                            raise RuntimeError("Model returned an empty final answer within the allowed iterations.")
-                        empty_answer_retries += 1
-                        logger.warning("Model returned an empty final answer; retrying if calls remain.")
-                        if empty_answer_retries == 1 and not final_call:
-                            messages.append(
-                                {
-                                    "role": "system",
-                                    "content": (
-                                        "Your previous response was empty. Provide a non-empty answer to the user's "
-                                        "question using the available information. If a Genie query is still running, "
-                                        "poll it before answering. Cite sources where possible and state limitations."
-                                    ),
-                                }
-                            )
-                        continue
-
-                    final_message: ChatCompletionMessageParam = {
-                        "role": "assistant",
-                        "content": assistant_message.content,
-                    }
-                    new_messages.append(final_message)
-                    if session_id is not None and self.memory is not None:
-                        logger.info("Saving {} new session messages to Lakebase", len(new_messages))
-                        self._save_memory(session_id, new_messages)
-                        logger.info("Session messages saved")
-                    return assistant_message.content
-
-                calls: list[ChatCompletionMessageFunctionToolCallParam] = []
-
-                for tool_call in assistant_message.tool_calls:
-                    if tool_call.type != "function":
-                        raise ValueError(f"Unsupported tool call type: {tool_call.type}")
-
-                    calls.append(
-                        {
-                            "id": tool_call.id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments,
-                            },
-                        }
-                    )
-                tool_request: ChatCompletionMessageParam = {
-                    "role": "assistant",
-                    "content": assistant_message.content,
-                    "tool_calls": calls,
+        response = self.predict(
+            ResponsesAgentRequest.model_validate(
+                {
+                    "input": request_messages,
+                    "custom_inputs": custom_inputs or None,
                 }
-                messages.append(tool_request)
-                new_messages.append(tool_request)
-
-                for call in calls:
-                    name = call["function"]["name"]
-                    logger.info("Executing tool: name={}, iteration={}", name, iteration + 1)
-                    arguments: object = json.loads(call["function"]["arguments"])
-                    if not isinstance(arguments, dict):
-                        raise ValueError(f"Tool arguments for {name} must be a JSON object")
-                    if name not in self.tools:
-                        logger.warning("Model requested an unavailable tool: name={}", name)
-                        result = "Error: this tool is unavailable. Use available tools or answer from existing results."
-                    else:
-                        started = perf_counter()
-                        result = self.tools[name].exec_fn(**arguments)
-                        logger.info(
-                            "Tool completed: name={}, seconds={:.2f}, result_chars={}",
-                            name,
-                            perf_counter() - started,
-                            len(str(result)),
-                        )
-                    tool_message: ChatCompletionMessageParam = {
-                        "role": "tool",
-                        "tool_call_id": call["id"],
-                        "content": str(result),
-                    }
-                    messages.append(tool_message)
-                    new_messages.append(tool_message)
-
-        raise RuntimeError("Model did not provide a final answer within the allowed iterations.")
+            )
+        )
+        parts: list[str] = []
+        for item in response.output:
+            data = item.model_dump()
+            if data.get("type") == "message" and data.get("role") == "assistant":
+                for content_item in data.get("content", []):
+                    if isinstance(content_item, dict) and isinstance(content_item.get("text"), str):
+                        parts.append(content_item["text"])
+        return "\n".join(parts).strip()
 
 
 async def create_notubiz_agent(
