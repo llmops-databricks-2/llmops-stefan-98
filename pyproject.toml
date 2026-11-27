@@ -9,7 +9,7 @@ dependencies = [
     "numpy==2.1.3",
     "pandas==2.2.3",
     "pyarrow==21.0.0",
-    "databricks-sdk==0.166.0",
+    "databricks-sdk==0.118.0",
     "pydantic==2.10.6",
     "loguru==0.7.3",
     "python-dotenv==1.2.1",
@@ -20,8 +20,6 @@ dependencies = [
     "mlflow==3.16.1",
     "nest-asyncio==1.6.0",
     "databricks-agents==1.12.0",
-    "fastapi==0.128.0",
-    "uvicorn==0.40.0",
     "psycopg==3.3.2",
     "psycopg-pool==3.3.0",
     "psycopg[binary]==3.3.2",
@@ -29,7 +27,6 @@ dependencies = [
 ]
 
 [project.scripts]
-start-server = "agent_server.start_server:main"
 notubiz_bootstrap = "notubiz_curator.scripts.bootstrap_notubiz:main"
 notubiz_ingest = "notubiz_curator.scripts.ingest_notubiz:main"
 notubiz_chunks = "notubiz_curator.scripts.create_notubiz_chunks:main"
@@ -47,7 +44,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where =["src"]
-include = ["notubiz_curator*", "agent_server*"]
+include = ["notubiz_curator*"]
 
 [tool.setuptools.dynamic]
 version = { file = "version.txt" }

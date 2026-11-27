@@ -2,13 +2,7 @@ resources:
   genie_spaces:
     notubiz-space:
       title: notubiz-space
-      permissions:
-        - service_principal_name: ${var.agent_service_principal_id}
-          level: CAN_RUN
       description: Vragen over de gestructureerde metadata van Notubiz-documenten.
-      lifecycle:
-        depends_on:
-          - resource: job_runs.initialize-tables
       warehouse_id: "${var.warehouse_id}"
       serialized_space:
         version: 2

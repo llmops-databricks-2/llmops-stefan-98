@@ -35,7 +35,6 @@ acc:
   experiment_path: "/llmops/stefan-98-acc"
   # Your provisioned Lakebase project for this environment.
   lakebase_instance: "lb-llmops-stefan-98"
-  lakebase_enabled: true
 
 # Production: your schema in the production catalog, written by your deploys; you read it.
 prd:
@@ -49,4 +48,3 @@ prd:
   experiment_path: "/llmops/stefan-98-prd"
   # Your provisioned Lakebase project for this environment.
   lakebase_instance: "lb-llmops-stefan-98"
-  lakebase_enabled: true

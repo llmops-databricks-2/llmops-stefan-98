@@ -23,4 +23,4 @@ def test_project_config_loads(env: str) -> None:
     assert cfg.embedding_endpoint == "databricks-gte-large-en"
     assert cfg.embedding_service == "course_ops.gateway.embed"
     assert cfg.lakebase_instance == "lb-llmops-stefan-98"
-    assert cfg.lakebase_enabled is True
+    assert cfg.lakebase_enabled is (env == "dev")
